@@ -1,0 +1,192 @@
+source: mlb is duckdb.table('final.parquet')
+
+--shows how many games each batter played
+run: mlb -> {
+    group_by: Player
+    aggregate: games is count()
+}
+
+--shows how many games each home plate umpire worked
+run: mlb -> {
+    group_by: HPUmp 
+    aggregate: umpgames is count(`Game.ID`)
+}
+
+--check to make sure no duplicate games exist
+run: mlb -> {
+    group_by: `Game.ID`
+    aggregate: match is count(`Game.ID`)
+    order_by: match desc
+}
+
+--same dataset, but added measures and dimensions to be referenced later
+source: dingers is duckdb.table('final.parquet') extend {
+    measure:
+    total_homer is HR.sum()
+    total_games is count(`Game.ID`)
+    total_hits is H.sum()
+    total_walks is BB.sum()
+    total_real_hits is H.sum()
+    dimension: total_score is TeamR + OpponentR
+    dimension: run_diff is TeamR - OpponentR
+}
+
+--shows each team's total home runs against how many games they played
+run: dingers -> {
+    group_by: Team
+    aggregate: total_homer, total_games
+}
+
+--shows total homeruns, but includes some duplicate records
+run: dingers -> {
+    group_by: `Game.ID`, Team
+    aggregate: total_homer
+    where: HR > 0
+}
+
+--check to make sure no duplicate data exists within each game
+run: dingers -> {
+    select: Player, HR, AB, Details, Team, Opponent, TeamR, OpponentR
+    where: `Game.ID` = 'ANA201904090'
+}
+
+--bar chart of homerun leaders during the 2019 MLB season
+# bar_chart
+run: dingers -> {
+    group_by: Player
+    aggregate: total_homer
+    limit: 10
+}
+
+--shows information relating to wind to see if it impacts the outcome of a game
+run: dingers -> {
+    group_by: total_score, WindSpeed, `Wind.Direction`, Team, Opponent, `Game.ID`
+    where: WindSpeed > 10
+    order_by: WindSpeed desc
+    
+}
+
+--scatter chart shows the relationship between wind speed and score
+# scatter_chart
+run: dingers -> {
+    group_by: WindSpeed, total_score, `Game.ID`
+    order_by: WindSpeed desc
+    limit: 10
+}
+
+--batting totals by each team organized by player
+# dashboard
+run: dingers -> {
+    group_by: Team
+    aggregate: total_hits, total_homer, total_walks, total_rbi is sum(RBI)
+    Where: Team = 'Seattle Mariners'
+    where: H > 0
+
+    nest: by_player is {
+        group_by: Player
+        aggregate: total_hits,total_homer, total_walks, total_rbi is sum(RBI)
+        order_by: total_hits desc
+    }
+}
+
+--shows how many walks each MLB umpire called
+run: dingers -> {
+    group_by: HPUmp
+    aggregate: total_walks
+    walks_per_game is total_walks / total_games
+}
+
+--shows how many home runs each team hit at their home stadium
+run: dingers -> {
+    group_by: Team
+    aggregate: total_homer
+    where: `H.A` = 'H'
+}
+
+--shows total RBIs given up by teams that played the Seattle Marienrs nested by team and pitcher name
+# dashboard
+run: dingers -> {
+    group_by: Team
+    aggregate: total_rbi_allowed is sum(RBI)
+    Where: Opponent = 'Seattle Mariners'
+    where: RBI > 0
+
+    nest: by_player is {
+        group_by: `Starting.Pitcher`
+        aggregate: total_rbi_allowed is sum(RBI)
+        order_by: total_rbi_allowed desc
+    }
+}
+
+--shows the games which went to extra innings, couldn't figure out how to get rid of duplicates
+run: dingers -> {
+    group_by: `Game.ID`, matchup is concat(Team, ' vs. ', Opponent)
+    where: Innings > 9
+}
+
+--shows how many games each team played that went to extra innnings
+# bar_chart
+run: dingers -> {
+    group_by: Team
+    where: Innings > 9
+    aggregate: extras is count(`Game.ID`)
+
+}
+
+--shows batting data for home team games based on a selected stadium
+# dahsboard
+run: dingers -> {
+    group_by: `Game.ID`, Opponent
+    aggregate: total_runs is sum(RBI), total_hits, total_homer
+    Where: Stadium = 'T-Mobile Park'
+    Where: `H.A` = 'H'
+
+    nest: by_player is {
+        group_by: `Player`
+        aggregate: total_runs is sum(RBI), total_hits, total_homer is sum(RBI)
+        order_by: total_hits desc
+        where: `H.A` = 'H'
+    }
+}
+
+--shows teams the top 5 teams in the mlb and their average run differential in wins
+# dahsboard
+run: dingers -> {
+    group_by: Team
+    aggregate: wins is count(`Game.ID`)
+    where: TeamR > OpponentR
+    
+    nest: by_avg_run_margin is {
+        group_by: Opponent
+        aggregate: avg_run_diff is avg(run_diff)
+    }
+    limit: 5
+}
+
+--bar chart of hits for each player on a given team
+# bar_chart
+run: dingers -> {
+    group_by: Player
+    aggregate: total_hits
+    where: Team = 'Oakland Athletics'
+    where: H > 0
+
+}
+
+--breakdown of what positions get the most hits
+# bar_chart
+run: dingers -> {
+    group_by: Pos
+    aggregate: total_hits
+    limit: 11
+}
+
+--shows the average score of each game each team plays in and their wins
+# bar_chart
+run: dingers -> {
+    group_by: Team
+    aggregate: avg_score is total_score.avg()
+
+    aggregate: wins is count(`Game.ID`)
+    where: TeamR > OpponentR
+}
